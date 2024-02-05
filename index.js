@@ -282,8 +282,8 @@ class Chunk {
 
     const material = new THREE.MeshStandardMaterial({
       vertexColors: true,
-      roughness: 0.8,
-      metalness: 0.8,
+      roughness: 0.95,
+      metalness: 0.2,
       wireframe: this.wireframe,
       side: THREE.DoubleSide,
       flatShading: true,
@@ -299,14 +299,14 @@ class Chunk {
         const height = this.grid[z][x];
 
         const color = (() => {
-          if (height < .35) return COLORS.water;
+          if (height < .45) return COLORS.water;
           if (height < .5) return COLORS.sand;
           if (height < .7) return COLORS.grass;
           if (height < .9) return COLORS.rock;
           return COLORS.snow;
         })();
 
-        positions.setZ(index, (height < .35 ? .35 : height) * this.heightMultiplier);
+        positions.setZ(index, (height < .45 ? .45 : height) * this.heightMultiplier);
         colors.setXYZ(index, color.r, color.g, color.b);
       }
     }
