@@ -3,12 +3,12 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 
 const DEFAULT_CONFIG = {
   size: 3,
-  chunkSize: 256,
-  resolution: 8,
-  octaves: 8,
-  persistance: 0.5,
-  lacunarity: 2,
-  heightMultiplier: 50,
+  chunkSize: 512,
+  resolution: 22,
+  octaves: 6,
+  persistance: 0.707,
+  lacunarity: 1.7,
+  heightMultiplier: 250,
   islands: false,
   wireframe: false,
 }
@@ -36,6 +36,31 @@ function createEmptyMatrix(size) {
   return Array.from({ length: size }).map(() => Array.from({ length: size }).fill(0));
 }
 
+function createIslandShapeGrid(size) {
+  const grid = [];
+
+  function evaluate(value) {
+    const a = 3;
+    const b = 2.2;
+
+    return Math.pow(value, a) / (Math.pow(value, a) + Math.pow(b - b * value, a))
+  }
+
+  for (let i = 0; i < size; i++) {
+    grid[i] = [];
+    for (let j = 0; j < size; j++) {
+      const x = i / size * 2 - 1;
+      const y = j / size * 2 - 1;
+
+      const value = Math.max(Math.abs(x), Math.abs(y));
+
+      grid[i][j] = evaluate(value);
+    }
+  }
+
+  return grid
+}
+
 // Core
 class Noise {
   seed;
@@ -46,7 +71,7 @@ class Noise {
     noise.seed(this.seed);
   }
 
-  getNoise(x, z) {
+  get(x, z) {
     const value = noise.simplex2(x, z);
 
     return (value + 1) / 2;
@@ -137,23 +162,24 @@ class Terrain {
     this.scene.add(chunk.mesh);
   }
 
-  #getHeight(x, z) {
+  #getHeight({ x, z }, offset) {
     let amplitude = 1;
     let frequency = 1;
     let noiseHeight = 0;
 
     const terrainWidth = this.size * this.chunkSize;
+    const gridSize = Math.floor(this.chunkSize / this.resolution);
 
-    const normalX = x / terrainWidth;
-    const normalZ = z / terrainWidth;
-
-    const cellSize = this.chunkSize / this.resolution;
+    const noisePosition = {
+      x: (x * gridSize + offset.x) / terrainWidth,
+      z: (z * gridSize + offset.z) / terrainWidth
+    }
 
     for (let i = 0; i < this.octaves; i++) {
-      const xPos = (normalX * cellSize) * frequency;  // Use x diretamente
-      const zPos = (normalZ * cellSize) * frequency;  // Use z diretamente
-
-      const value = this.noise.getNoise(xPos, zPos);
+      const value = this.noise.get(
+        noisePosition.x * frequency,
+        noisePosition.z * frequency
+      );
 
       noiseHeight += value * amplitude;
 
@@ -170,9 +196,7 @@ class Terrain {
   }
 
   destroy() {
-    this.chunks.forEach(chunk => {
-      this.scene.remove(chunk.mesh);
-    });
+    this.chunks.forEach(chunk => this.scene.remove(chunk.mesh));
 
     this.chunks.length = 0;
   }
@@ -250,20 +274,13 @@ class Chunk {
     for (let z = 0; z < gridSize; z++) {
       for (let x = 0; x < gridSize; x++) {
         const height = this.getHeight(
-          x + this.offset.x,
-          z + this.offset.z
+          { x, z },
+          this.offset
         );
 
         grid[z][x] = height;
       }
     }
-
-    // Normaize heights
-    // for (let y = 0; y < gridSize; y++) {
-    //   for (let x = 0; x < gridSize; x++) {
-    //     grid[y][x] = inverseLerp(this.minHeight, this.maxHeight, grid[y][x]);
-    //   }
-    // }
 
     return grid;
   }
@@ -306,17 +323,15 @@ class Chunk {
           return COLORS.snow;
         })();
 
-        positions.setZ(index, (height < .45 ? .45 : height) * this.heightMultiplier);
+        positions.setZ(index, (height < .49 ? .49 : height) * this.heightMultiplier);
         colors.setXYZ(index, color.r, color.g, color.b);
       }
     }
+    const mesh = new THREE.Mesh(geometry, material);
 
-    const mesh = new THREE.Mesh(geometry.toNonIndexed(), material);
-
-    mesh.position.x = this.offset.x;
-    mesh.position.z = this.offset.z;
+    mesh.position.add(new THREE.Vector3(this.offset.x, 0, this.offset.z))
     mesh.rotation.x = - Math.PI / 2;
-    mesh.castShadow = true;
+    mesh.castShadow = false;
     mesh.receiveShadow = true;
 
     return mesh;
@@ -336,12 +351,12 @@ class UIControl {
 
     generationFolder.add(this.config, 'size', 1, 5, 1);
     generationFolder.add(this.config, 'resolution', 2, 32, 2);
-    generationFolder.add(this.config, 'chunkSize', 64, 2048, 4);
+    generationFolder.add(this.config, 'chunkSize', 128, 2048, 128);
 
     generationFolder.add(this.config, 'octaves', 1, 10, 1);
     generationFolder.add(this.config, 'persistance', 0.1, 5, 0.1);
-    generationFolder.add(this.config, 'lacunarity', 1, 10, 1);
-    generationFolder.add(this.config, 'heightMultiplier', 1, 100, 0.1);
+    generationFolder.add(this.config, 'lacunarity', 1, 10, 0.1);
+    generationFolder.add(this.config, 'heightMultiplier', 1, 1000, 0.1);
 
     generationFolder.add(this.config, 'islands');
     generationFolder.add(this.config, 'wireframe');
@@ -354,7 +369,6 @@ class UIControl {
         window.terrain.create();
       }
     }, 'Generate new seed');
-
   }
 }
 
@@ -401,6 +415,12 @@ function main() {
   window.terrain = new Terrain({ ...CONFIG, scene });
 
   window.terrain.create();
+
+  const dir = new THREE.Vector3(0, 1, 0);
+  dir.normalize();
+  const origin = new THREE.Vector3(50, 0, 50);
+  const arrowHelper = new THREE.ArrowHelper(dir, origin, 350, 'red');
+  scene.add(arrowHelper);
 
   const animate = () => {
     requestAnimationFrame(animate);
